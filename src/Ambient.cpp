@@ -57,6 +57,7 @@ Ambient::begin(unsigned int channelId, const char * writeKey, WiFiClient * c, co
         this->data[i].set = false;
     }
     this->cmnt.set = false;
+    this->lastsend = 0;
     return true;
 }
 
@@ -129,9 +130,27 @@ bool Ambient::connect2host(uint32_t tmout) {
     return true;
 }
 
+#define GetStatMaxRetry 100
+
 int
 Ambient::getStatusCode() {
-    String _buf = this->client->readStringUntil('\n');
+    String _buf;
+    int retry = 0;
+    while (retry < GetStatMaxRetry) {
+        _buf = this->client->readStringUntil('\n');
+        if (_buf.length() != 0) {
+            break;
+        }
+        delay(10);
+        retry++;
+    }
+    if (retry != 0) {
+        DBG("get stat retry:"); DBG(retry); DBG("\r\n");
+        ;
+    }
+    if (retry == GetStatMaxRetry) {
+        return 0;
+    }
     int from = _buf.indexOf("HTTP/1.1 ") + sizeof("HTTP/1.1 ") - 1;
     int to = _buf.indexOf(' ', from);
     this->status = _buf.substring(from, to).toInt();
@@ -144,6 +163,10 @@ Ambient::send(uint32_t tmout) {
     char body[192];
     char inChar;
 
+    if (this->lastsend != 0 && (millis() - this->lastsend) < 4999) {
+        this->status = 403;
+        return false;
+    }
     this->status = 0;
     if (connect2host(tmout) == false) {
         return false;
@@ -169,7 +192,7 @@ Ambient::send(uint32_t tmout) {
     strcat(body, "}\r\n");
 
     memset(str, 0, sizeof(str));
-    sprintf(str, "POST /api/v2/channels/%d/data HTTP/1.1\r\n", this->channelId);
+    sprintf(str, "POST /api/v2/channels/%u/data HTTP/1.1\r\n", this->channelId);
     if (this->port == 80) {
         sprintf(&str[strlen(str)], "Host: %s\r\n", this->host);
     } else {
@@ -210,6 +233,7 @@ Ambient::send(uint32_t tmout) {
         this->data[i].set = false;
     }
     this->cmnt.set = false;
+    this->lastsend = millis();
 
     return true;
 }
@@ -219,12 +243,16 @@ Ambient::bulk_send(char *buf, uint32_t tmout) {
     char str[180];
     char inChar;
 
+    if (this->lastsend != 0 && (millis() - this->lastsend) < 4999) {
+        this->status = 403;
+        return false;
+    }
     this->status = 0;
     if (connect2host(tmout) == false) {
         return false;
     }
     memset(str, 0, sizeof(str));
-    sprintf(str, "POST /api/v2/channels/%d/dataarray HTTP/1.1\r\n", this->channelId);
+    sprintf(str, "POST /api/v2/channels/%u/dataarray HTTP/1.1\r\n", this->channelId);
     if (this->port == 80) {
         sprintf(&str[strlen(str)], "Host: %s\r\n", this->host);
     } else {
@@ -275,6 +303,7 @@ Ambient::bulk_send(char *buf, uint32_t tmout) {
         this->data[i].set = false;
     }
     this->cmnt.set = false;
+    this->lastsend = millis();
 
     return (sent == 0) ? -1 : sent;
 }
@@ -289,7 +318,7 @@ Ambient::read(char * buf, int len, int n, uint32_t tmout) {
         return false;
     }
     memset(str, 0, sizeof(str));
-    sprintf(str, "GET /api/v2/channels/%d/data?readKey=%s&n=%d HTTP/1.1\r\n", this->channelId, this->readKey, n);
+    sprintf(str, "GET /api/v2/channels/%u/data?readKey=%s&n=%d HTTP/1.1\r\n", this->channelId, this->readKey, n);
     if (this->port == 80) {
         sprintf(&str[strlen(str)], "Host: %s\r\n\r\n", this->host);
     } else {
@@ -336,7 +365,7 @@ Ambient::delete_data(const char * userKey, uint32_t tmout) {
         return false;
     }
     memset(str, 0, sizeof(str));
-    sprintf(str, "DELETE /api/v2/channels/%d/data?userKey=%s HTTP/1.1\r\n", this->channelId, userKey);
+    sprintf(str, "DELETE /api/v2/channels/%u/data?userKey=%s HTTP/1.1\r\n", this->channelId, userKey);
     if (this->port == 80) {
         sprintf(&str[strlen(str)], "Host: %s\r\n", this->host);
     } else {
